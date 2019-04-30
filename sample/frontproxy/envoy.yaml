@@ -1,0 +1,30 @@
+static_resources:
+  clusters:
+  - connect_timeout: 1s
+    type: STRICT_DNS
+    hosts:
+    - socket_address:
+        address: host.docker.internal
+        port_value: 18000
+    http2_protocol_options: {}
+    name: xds_cluster
+dynamic_resources:
+  cds_config:
+    api_config_source:
+      api_type: GRPC
+      grpc_services:
+      - envoy_grpc:
+          cluster_name: xds_cluster
+  lds_config:
+    api_config_source:
+      api_type: GRPC
+      grpc_services:
+      - envoy_grpc:
+          cluster_name: xds_cluster
+node:
+  cluster: frontproxy
+  id: frontproxy
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
