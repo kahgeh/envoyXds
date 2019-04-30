@@ -19,3 +19,5 @@ require (
 	github.com/thoas/go-funk v0.4.0
 	google.golang.org/grpc v1.20.1
 )
+
+replace github.com/kahgeh/envoyXds => ./

@@ -1,8 +1,11 @@
-package plugins
+package registryplugins
 
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -10,7 +13,7 @@ import (
 // Endpoint represent the service endpoint
 type Endpoint struct {
 	UniqueID       string
-	Clustername    string
+	ClusterName    string
 	Port           uint16
 	Host           string
 	FrontProxyPath string
@@ -28,6 +31,35 @@ type EndpointUpdateRequest struct {
 type Plugin interface {
 	getName() string
 	run(ctx context.Context) chan *EndpointUpdateRequest
+}
+
+func hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
+
+func (request *EndpointUpdateRequest) GroupByCluster() map[string][]Endpoint {
+	clusters := make(map[string][]Endpoint)
+	for _, endpoint := range request.Endpoints {
+		if _, alreadyExist := clusters[endpoint.ClusterName]; !alreadyExist {
+			clusters[endpoint.ClusterName] = []Endpoint{endpoint}
+			continue
+		}
+		endpoints := clusters[endpoint.ClusterName]
+		clusters[endpoint.ClusterName] = append(endpoints, endpoint)
+	}
+	return clusters
+}
+
+// GetHash provide an indication if endpoints are the same from another set of endpoints
+func (request *EndpointUpdateRequest) GetHash() uint32 {
+	ids := []string{}
+	for _, endpoint := range request.Endpoints {
+		ids = append(ids, endpoint.UniqueID)
+	}
+	sort.Strings(ids)
+	return hash(strings.Join(ids, ""))
 }
 
 // RunAllPlugins starts off all the plugins and fan-in all their channels into the returned channel

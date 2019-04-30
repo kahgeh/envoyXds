@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"os"
 
-	plugins "github.com/kahgeh/envoyXds/plugins"
 	myals "github.com/kahgeh/envoyXds/server/accesslogs"
+	"github.com/kahgeh/envoyXds/sources"
+	rp "github.com/kahgeh/envoyXds/sources/registryplugins"
 	"sync"
 	"time"
 
@@ -20,16 +21,9 @@ import (
 	"google.golang.org/grpc"
 
 	v2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	//"github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
-	lis "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
 	accesslog "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v2"
 	discovery "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v2"
-
-	hcm "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
-	"github.com/envoyproxy/go-control-plane/pkg/util"
 )
 
 var (
@@ -237,117 +231,30 @@ func main() {
 
 	als.Dump(func(s string) { log.Debug(s) })
 	cb.Report()
-	dockerPlugin := &plugins.Docker{}
-	allPlugins := []plugins.Plugin{dockerPlugin}
-	channel := plugins.RunAllPlugins(ctx, allPlugins)
-	existingIds := make(map[string]string)
-
+	dockerPlugin := &rp.Docker{PollingPeriodInSeconds: 5}
+	allPlugins := []rp.Plugin{dockerPlugin}
+	channel := rp.RunAllPlugins(ctx, allPlugins)
+	var previousUpdateHash uint32
+	version := 0
 	for {
 		select {
 		case updateRequest := <-channel:
-			endpoint := (*updateRequest).Endpoints[0]
-			_, alreadyExists := existingIds[endpoint.UniqueID]
-			if !alreadyExists {
-				fmt.Printf("%v\n", updateRequest)
-				nodeId := config.GetStatusKeys()[0]
-				clusterName := endpoint.Clustername
-				h := &core.Address{Address: &core.Address_SocketAddress{
-					SocketAddress: &core.SocketAddress{
-						Address:  endpoint.Host,
-						Protocol: core.TCP,
-						PortSpecifier: &core.SocketAddress_PortValue{
-							PortValue: uint32(endpoint.Port),
-						},
-					},
-				}}
-
-				c := []cache.Resource{
-					&v2.Cluster{
-						Name:                 clusterName,
-						ConnectTimeout:       2 * time.Second,
-						ClusterDiscoveryType: &v2.Cluster_Type{Type: v2.Cluster_STRICT_DNS},
-						DnsLookupFamily:      v2.Cluster_V4_ONLY,
-						LbPolicy:             v2.Cluster_ROUND_ROBIN,
-						Hosts:                []*core.Address{h},
-					},
-				}
-
-				var listenerName = "listener_0"
-				//var targetHost = endpoint.Host
-				var targetPath = endpoint.FrontProxyPath
-				var virtualHostName = "local_service"
-				var routeConfigName = "local_route"
-
-				v := route.VirtualHost{
-					Name:    virtualHostName,
-					Domains: []string{"*"},
-
-					Routes: []route.Route{{
-						Match: route.RouteMatch{
-							PathSpecifier: &route.RouteMatch_Path{
-								Path: targetPath,
-							},
-						},
-						Action: &route.Route_Route{
-							Route: &route.RouteAction{
-								ClusterSpecifier: &route.RouteAction_Cluster{
-									Cluster: clusterName,
-								},
-								PrefixRewrite: "/",
-							},
-						},
-					}}}
-
-				manager := &hcm.HttpConnectionManager{
-					CodecType:  hcm.AUTO,
-					StatPrefix: "ingress_http",
-					RouteSpecifier: &hcm.HttpConnectionManager_RouteConfig{
-						RouteConfig: &v2.RouteConfiguration{
-							Name:         routeConfigName,
-							VirtualHosts: []route.VirtualHost{v},
-						},
-					},
-					HttpFilters: []*hcm.HttpFilter{{
-						Name: util.Router,
-					}},
-				}
-				pbst, err := util.MessageToStruct(manager)
-				if err != nil {
-					panic(err)
-				}
-
-				var l = []cache.Resource{
-					&v2.Listener{
-						Name: listenerName,
-						Address: core.Address{
-							Address: &core.Address_SocketAddress{
-								SocketAddress: &core.SocketAddress{
-									Protocol: core.TCP,
-									Address:  "0.0.0.0",
-									PortSpecifier: &core.SocketAddress_PortValue{
-										PortValue: 80,
-									},
-								},
-							},
-						},
-						FilterChains: []listener.FilterChain{{
-							Filters: []listener.Filter{{
-								Name: util.HTTPConnectionManager,
-								ConfigType: &lis.Filter_Config{
-									Config: pbst,
-								},
-							}},
-						}},
-					}}
+			if updateRequest.GetHash() != previousUpdateHash {
+				log.Info("Changes detected")
+				clusters := updateRequest.GroupByCluster()
+				c := sources.MapToClusterResources(clusters)
+				l := sources.MapToListenerResource(clusters)
+				previousUpdateHash = updateRequest.GetHash()
+				version := version + 1
 				snap := cache.NewSnapshot(fmt.Sprint(version), nil, c, nil, l)
-
-				config.SetSnapshot(nodeId, snap)
+				nodeID := config.GetStatusKeys()[0]
+				config.SetSnapshot(nodeID, snap)
+				log.Infof("Configuration replaced with version %d", version)
 			}
 
 		case <-ctx.Done():
 			return
 		}
-
-		fmt.Scanln()
+		<-time.After(5 * time.Second)
 	}
 }

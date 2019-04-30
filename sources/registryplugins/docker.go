@@ -1,4 +1,4 @@
-package plugins
+package registryplugins
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 
 // Docker provides configuration source from docker
 type Docker struct {
+	PollingPeriodInSeconds time.Duration
 }
 
 const (
@@ -90,7 +91,7 @@ func mapContainerToDiscoverableContainer(container types.Container, servicePorts
 	return discoveredContainer
 }
 
-func getDiscoverableContainers(containers []types.Container) *[]discoverableContainer {
+func getDiscoverableContainers(containers []types.Container) []discoverableContainer {
 	discoveredContainers := []discoverableContainer{}
 	for _, container := range containers {
 		servicePorts := getServicePorts(container)
@@ -99,7 +100,7 @@ func getDiscoverableContainers(containers []types.Container) *[]discoverableCont
 				*mapContainerToDiscoverableContainer(container, servicePorts))
 		}
 	}
-	return &discoveredContainers
+	return discoveredContainers
 }
 
 type enPorts []types.Port
@@ -126,7 +127,7 @@ func (ports enPorts) getMappedAddress(portNumber uint16) (mappedHost string, map
 	return
 }
 
-func (container *discoverableContainer) mapToEndpointUpdateRequest() *EndpointUpdateRequest {
+func (container *discoverableContainer) mapToEndpoints() []Endpoint {
 	endpoints := []Endpoint{}
 	for _, service := range container.services {
 		host, portNumber := enPorts(container.Ports).
@@ -141,7 +142,7 @@ func (container *discoverableContainer) mapToEndpointUpdateRequest() *EndpointUp
 
 		endpoint := Endpoint{
 			UniqueID:       container.ID,
-			Clustername:    service.name,
+			ClusterName:    service.name,
 			Host:           host,
 			Port:           portNumber,
 			FrontProxyPath: frontProxyPath,
@@ -150,13 +151,7 @@ func (container *discoverableContainer) mapToEndpointUpdateRequest() *EndpointUp
 		endpoints = append(endpoints, endpoint)
 	}
 
-	request := &EndpointUpdateRequest{
-		PluginName: docker,
-		Timestamp:  time.Now(),
-		Endpoints:  endpoints,
-	}
-
-	return request
+	return endpoints
 }
 
 func (plugin *Docker) getName() string {
@@ -180,19 +175,27 @@ func (plugin *Docker) run(ctx context.Context) chan *EndpointUpdateRequest {
 
 			discoveredContainers := getDiscoverableContainers(containers)
 
-			for _, container := range *discoveredContainers {
-				select {
-				case channel <- container.mapToEndpointUpdateRequest():
-					fmt.Printf("[%s] sending update request\n", plugin.getName())
-				case <-ctx.Done():
-					fmt.Printf("[%s] terminating scanner loop\n", plugin.getName())
-					return
-				}
+			endpoints := []Endpoint{}
+			for _, container := range discoveredContainers {
+				endpoints = append(endpoints, container.mapToEndpoints()...)
+			}
 
+			updateRequest := &EndpointUpdateRequest{
+				PluginName: plugin.getName(),
+				Timestamp:  time.Now(),
+				Endpoints:  endpoints,
 			}
 
 			select {
-			case <-time.After(2 * time.Second):
+			case channel <- updateRequest:
+				fmt.Printf("[%s] sending update request\n", plugin.getName())
+			case <-ctx.Done():
+				fmt.Printf("[%s] terminating scanner loop\n", plugin.getName())
+				return
+			}
+
+			select {
+			case <-time.After(plugin.PollingPeriodInSeconds * time.Second):
 				fmt.Printf("[%s] going again\n", plugin.getName())
 			case <-ctx.Done():
 				fmt.Printf("[%s] terminating scanner loop\n", plugin.getName())
