@@ -19,6 +19,11 @@ This will allow you to successfully call service1 via the frontproxy
     -> { "hello from": "service1-i2" }
 ```
 
+In additional to that you can remove or add more docker containers and see the routes being updated
+
+    `curl localhost:9901/config_dump`
+
+*note that result may be cached if viewed on the browser, better to use `curl` here
 
 # Pre-requisites
 

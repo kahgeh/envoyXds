@@ -6,6 +6,11 @@ static_resources:
     - socket_address:
         address: host.docker.internal
         port_value: 18000
+    upstream_connection_options:
+      tcp_keepalive:
+        keepalive_probes: 1
+        keepalive_time: 10
+        keepalive_interval: 10    
     http2_protocol_options: {}
     name: xds_cluster
 dynamic_resources:

@@ -245,7 +245,7 @@ func main() {
 				c := sources.MapToClusterResources(clusters)
 				l := sources.MapToListenerResource(clusters)
 				previousUpdateHash = updateRequest.GetHash()
-				version := version + 1
+				version = version + 1
 				snap := cache.NewSnapshot(fmt.Sprint(version), nil, c, nil, l)
 				nodeID := config.GetStatusKeys()[0]
 				config.SetSnapshot(nodeID, snap)
