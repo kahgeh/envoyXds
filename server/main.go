@@ -8,11 +8,12 @@ import (
 	"net/http"
 	"os"
 
+	"sync"
+	"time"
+
 	myals "github.com/kahgeh/envoyXds/server/accesslogs"
 	"github.com/kahgeh/envoyXds/sources"
 	rp "github.com/kahgeh/envoyXds/sources/registryplugins"
-	"sync"
-	"time"
 
 	"github.com/envoyproxy/go-control-plane/pkg/cache"
 	xds "github.com/envoyproxy/go-control-plane/pkg/server"
@@ -231,7 +232,7 @@ func main() {
 
 	als.Dump(func(s string) { log.Debug(s) })
 	cb.Report()
-	dockerPlugin := &rp.Docker{PollingPeriodInSeconds: 5}
+	dockerPlugin := &rp.Docker{}
 	allPlugins := []rp.Plugin{dockerPlugin}
 	channel := rp.RunAllPlugins(ctx, allPlugins)
 	var previousUpdateHash uint32

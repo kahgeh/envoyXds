@@ -3,18 +3,19 @@ package registryplugins
 import (
 	"context"
 	"fmt"
-	"github.com/docker/docker/api/types"
-	whale "github.com/docker/docker/client"
-	"github.com/kahgeh/envoyXds/utility"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	whale "github.com/docker/docker/client"
+	"github.com/kahgeh/envoyXds/utility"
 )
 
 // Docker provides configuration source from docker
 type Docker struct {
-	PollingPeriodInSeconds time.Duration
 }
 
 const (
@@ -158,34 +159,50 @@ func (plugin *Docker) getName() string {
 	return docker
 }
 
+func getEndpointUpdateRequest(ctx context.Context, plugin *Docker, cli *whale.Client) *EndpointUpdateRequest {
+
+	containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
+	if err != nil {
+		panic(err)
+	}
+
+	discoveredContainers := getDiscoverableContainers(containers)
+
+	endpoints := []Endpoint{}
+	for _, container := range discoveredContainers {
+		endpoints = append(endpoints, container.mapToEndpoints()...)
+	}
+
+	updateRequest := &EndpointUpdateRequest{
+		PluginName: plugin.getName(),
+		Timestamp:  time.Now(),
+		Endpoints:  endpoints,
+	}
+
+	return updateRequest
+}
+
 func (plugin *Docker) run(ctx context.Context) chan *EndpointUpdateRequest {
 	cli, err := whale.NewEnvClient()
 	if err != nil {
 		panic(err)
 	}
+
+	filters := filters.NewArgs()
+	filters.Add("event", "stop")
+	filters.Add("event", "kill")
+	filters.Add("event", "start")
+	eventsOptions := types.EventsOptions{
+		Filters: filters,
+	}
+	eventsChannel, errChannel := cli.Events(ctx, eventsOptions)
 	channel := make(chan *EndpointUpdateRequest)
 	go func(plugin *Docker) {
 		defer close(channel)
+		errCnt := 0
 		for {
 
-			containers, err := cli.ContainerList(ctx, types.ContainerListOptions{})
-			if err != nil {
-				panic(err)
-			}
-
-			discoveredContainers := getDiscoverableContainers(containers)
-
-			endpoints := []Endpoint{}
-			for _, container := range discoveredContainers {
-				endpoints = append(endpoints, container.mapToEndpoints()...)
-			}
-
-			updateRequest := &EndpointUpdateRequest{
-				PluginName: plugin.getName(),
-				Timestamp:  time.Now(),
-				Endpoints:  endpoints,
-			}
-
+			updateRequest := getEndpointUpdateRequest(ctx, plugin, cli)
 			select {
 			case channel <- updateRequest:
 				fmt.Printf("[%s] sending update request\n", plugin.getName())
@@ -194,11 +211,18 @@ func (plugin *Docker) run(ctx context.Context) chan *EndpointUpdateRequest {
 				return
 			}
 
+			fmt.Printf("[%s] Waiting for an a docker event\n", plugin.getName())
 			select {
-			case <-time.After(plugin.PollingPeriodInSeconds * time.Second):
-				fmt.Printf("[%s] going again\n", plugin.getName())
+			case evt := <-eventsChannel:
+				fmt.Printf("[%s] Event %v", plugin.getName(), evt)
+			case <-errChannel:
+				fmt.Printf("[%s] Error detected from event system\n", plugin.getName())
+				errCnt = errCnt + 1
+				if errCnt > 10 {
+					fmt.Printf("[%s] Too many errors detected\n", plugin.getName())
+					return
+				}
 			case <-ctx.Done():
-				fmt.Printf("[%s] terminating scanner loop\n", plugin.getName())
 				return
 			}
 		}
