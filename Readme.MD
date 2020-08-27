@@ -44,5 +44,6 @@ in vscode launch.json set the env variables section
 
 # References
 
-1. https://github.com/envoyproxy/go-control-plane/tree/master/pkg/test
-2. https://github.com/salrashid123/envoy_control
+1. https://blog.christianposta.com/envoy/guidance-for-building-a-control-plane-to-manage-envoy-proxy-based-infrastructure/
+2. https://github.com/envoyproxy/go-control-plane/tree/master/pkg/test
+3. https://github.com/salrashid123/envoy_control
